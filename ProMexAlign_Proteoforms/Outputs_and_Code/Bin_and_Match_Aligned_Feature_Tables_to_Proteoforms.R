@@ -1,11 +1,13 @@
 ## HubMAP
 ## David Degnan, Pacific Northwest National Laboratory
-## Last Edited: 03/02/2022
+## Last Edited: 10/04/2022
 
 # Load libraries
 library(dplyr)
 library(purrr)
 library(tibble)
+
+setwd("~/Git_Repos/spatially-resolved-TDP/")
 
 ######################################################
 ## STEP 1: Collapse down TopPIC and TDPortal Output ##
@@ -19,7 +21,7 @@ library(tibble)
 # was selected per TDPortal Accession and Monoisotopic Mass. 
 
 # Load proteoform data
-Proteoform <- read.csv("~/HubMAP/TDportal_TopPIC_overlappingIDs.csv")
+Proteoform <- read.csv("ProMexAlign_Proteoforms/Inputs/Proteoforms/TDportal_TopPIC_overlappingIDs.csv")
 
 ## TopPIC-----------------------------------------------------------------------
 
@@ -89,7 +91,7 @@ TDPortal <- Proteoform %>%
 # MS1 Feature Tables (MS1FTs). These intensities may be noise. In this approach, 
 # we decided to remove them. 
 
-# Remove itensities identified by ProMexAlign
+# Remove intensities identified by ProMexAlign
 cleanData <- function(filepath, sample) {
   
   # Read file 
@@ -115,9 +117,9 @@ cleanData <- function(filepath, sample) {
 
 # Load the data 
 RatBrain <- rbind(
-  cleanData("~/HubMAP/Rat_Brain_CV30_crosstab.tsv", "CV30"),
-  cleanData("~/HubMAP/Rat_Brain_CV40_crosstab.tsv", "CV40"),
-  cleanData("~/HubMAP/Rat_Brain_CV50_crosstab.tsv", "CV50") 
+  cleanData("~/Git_Repos/spatially-resolved-TDP/ProMexAlign_Proteoforms/Inputs/ProMexAlign/Rat_Brain_CV30_crosstab.tsv", "CV30"),
+  cleanData("~/Git_Repos/spatially-resolved-TDP/ProMexAlign_Proteoforms/Inputs/ProMexAlign/Rat_Brain_CV40_crosstab.tsv", "CV40"),
+  cleanData("~/Git_Repos/spatially-resolved-TDP/ProMexAlign_Proteoforms/Inputs/ProMexAlign/Rat_Brain_CV50_crosstab.tsv", "CV50") 
 ) %>%
   arrange(MonoMass) 
 
@@ -137,15 +139,25 @@ RatBrain$AverageRT <- lapply(1:nrow(RatBrain), function(row) {
 
 # Build a function to iterate through each proteoform table and identify
 # matches to the RatBrain table
-FindMatches <- function(Proteoforms, ProMexTable) {
+
+#' @param Proteoforms The cleaned TDPortal or TopPIC dataframes with redundancies removed.
+#' @param ProMexTable The combined ProMexAlign tables. 
+#' @param PPMWindow The ppm window for collapsing proteoforms. Default is 15 ppm.
+#' @param RTWindow The retention time for collapsing proteoforms. Default is 2 min. 
+FindMatches <- function(Proteoforms, ProMexTable, PPMWindow = 15, RTWindow = 2) {
 
   NoMatches <- c()
   
+  Tolerance <- ProMexTable$MonoMass * (PPMWindow / 1e6)
+  Upper <- ProMexTable$MonoMass + Tolerance
+  Lower <- ProMexTable$MonoMass - Tolerance
+  
   Matches <- lapply(1:nrow(Proteoforms), function(row) {
     
-    # Filter down to options within +/-1 Da and +/-4 RT window
-    Matches <- which(abs(ProMexTable$MonoMass - Proteoforms$Mass[row]) <= 1 & 
-                       abs(ProMexTable$AverageRT - Proteoforms$Retention.Time[row]) <= 4)
+    # Filter down to options within the PPM and RT Window
+    Matches <- which(Upper >= Proteoforms$Mass[row] - (PPMWindow/1e6) &
+                     Lower <= Proteoforms$Mass[row] + (PPMWindow/1e6) &
+                     abs(ProMexTable$AverageRT - Proteoforms$Retention.Time[row]) <= RTWindow)
     
     # If no matches, return message
     if (length(Matches) == 0) {
@@ -155,7 +167,6 @@ FindMatches <- function(Proteoforms, ProMexTable) {
       Matches <- Matches[which.min(abs(ProMexTable[Matches, "MonoMass"] - Proteoforms$Mass[row]))]
     } else if (length(Matches) > 1) {
       warning("There are still multiple matches that need to be addressed.")
-      browser()
     } 
     
     return(Matches)
