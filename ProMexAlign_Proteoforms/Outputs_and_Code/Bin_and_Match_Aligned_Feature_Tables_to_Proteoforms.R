@@ -244,14 +244,15 @@ RatBrain_NA <- RatBrain[is.na(RatBrain$TopPIC.Unique.ID) & is.na(RatBrain$TDPort
 RatBrain_Proteoform <- RatBrain[!is.na(RatBrain$TopPIC.Unique.ID) | !is.na(RatBrain$TDPortal.Unique.ID),]
 
 # Define a collapse function for each subset of data 
-large_collapse <- function(x, proteoform_mode) {
+large_collapse <- function(x, proteoform_mode, PPMWindow = 15, RTWindow = 2) {
 
   # Determine group numbers based on whether each subsequent mass falls within a
   # +/- 1 Da range of the previous mass.
   MassGroups <- x %>%
     mutate(
-      LowMass = MonoMass - 1,
-      HighMass = MonoMass + 1,
+      Tolerance = MonoMass * (PPMWindow / 1e6),
+      LowMass = MonoMass - Tolerance,
+      HighMass = MonoMass + Tolerance,
       MassFlag = MonoMass >= lag(LowMass, default = first(LowMass)) &
         MonoMass <= lag(HighMass, default = first(HighMass))
     )
@@ -288,8 +289,8 @@ large_collapse <- function(x, proteoform_mode) {
       RTGroups <- sub %>% 
         arrange(AverageRT) %>%
         mutate(
-          LowRT = AverageRT - 4,
-          HighRT = AverageRT + 4,
+          LowRT = AverageRT - RTWindow,
+          HighRT = AverageRT + RTWindow,
           RTFlag = AverageRT >= lag(LowRT, default = first(LowRT)) &
             AverageRT <= lag(HighRT, default = first(HighRT))
         )
@@ -310,8 +311,7 @@ large_collapse <- function(x, proteoform_mode) {
   # Generate a new ID and return maximum mass, mean min and max RT, and summed 
   # intensity
   median2 <- function(x) {
-    x[x == 0] <- NA
-    median(x, na.rm = T)
+    paste0(x, collapse = ", ")
   }
   
   # Generate function to collapse non-NA values
@@ -334,11 +334,11 @@ large_collapse <- function(x, proteoform_mode) {
       tidyr::nest() %>%
       mutate(
         NumFeatures = purrr::map(data, function(x) {nrow(x)}) %>% unlist(),
-        MonoMass = purrr::map(data, function(x) {max(x$MonoMass)}) %>% unlist(),
+        MonoMass = purrr::map(data, function(x) {x$MonoMass %>% paste0(collapse = ", ")}) %>% unlist(),
         MinElutionTime = purrr::map(data, function(x) {
-          x$MinElutionTime %>% mean() %>% round(3)}) %>% unlist(),
+          x$MinElutionTime %>% min() %>% round(3)}) %>% unlist(),
         MaxElutionTime = purrr::map(data, function(x) {
-          x$MaxElutionTime %>% mean() %>% round(3)}) %>% unlist(),
+          x$MaxElutionTime %>% max() %>% round(3)}) %>% unlist(),
         H3_C1 = purrr::map(data, function(x) {median2(x$H3_C1 %>% unlist())}) %>% unlist(),
         H3_C2 = purrr::map(data, function(x) {median2(x$H3_C2 %>% unlist())}) %>% unlist(),
         H3_C3 = purrr::map(data, function(x) {median2(x$H3_C3 %>% unlist())}) %>% unlist(),
@@ -366,11 +366,11 @@ large_collapse <- function(x, proteoform_mode) {
       tidyr::nest() %>%
       mutate(
         NumFeatures = purrr::map(data, function(x) {nrow(x)}) %>% unlist(),
-        MonoMass = purrr::map(data, function(x) {max(x$MonoMass)}) %>% unlist(),
+        MonoMass = purrr::map(data, function(x) {x$MonoMass %>% paste0(collapse = ", ")}) %>% unlist(),
         MinElutionTime = purrr::map(data, function(x) {
-          x$MinElutionTime %>% mean() %>% round(3)}) %>% unlist(),
+          x$MinElutionTime %>% min() %>% round(3)}) %>% unlist(),
         MaxElutionTime = purrr::map(data, function(x) {
-          x$MaxElutionTime %>% mean() %>% round(3)}) %>% unlist(),
+          x$MaxElutionTime %>% max() %>% round(3)}) %>% unlist(),
         TopPIC.Unique.ID = purrr::map2(data, "TopPIC.Unique.ID", collapse_fun) %>% unlist(),
         TopPIC.Mass = purrr::map2(data, "TopPIC.Mass", collapse_fun) %>% unlist(),                 
         TopPIC.Retention.Time = purrr::map2(data, "TopPIC.Retention.Time", collapse_fun) %>% unlist(),      
