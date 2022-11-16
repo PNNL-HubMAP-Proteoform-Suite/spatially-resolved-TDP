@@ -1,11 +1,13 @@
 ## HubMAP
 ## David Degnan, Pacific Northwest National Laboratory
-## Last Edited: 03/02/2022
+## Last Edited: 10/06/2022
 
 # Load libraries
 library(dplyr)
 library(purrr)
 library(tibble)
+
+setwd("~/Git_Repos/spatially-resolved-TDP/")
 
 ######################################################
 ## STEP 1: Collapse down TopPIC and TDPortal Output ##
@@ -19,7 +21,7 @@ library(tibble)
 # was selected per TDPortal Accession and Monoisotopic Mass. 
 
 # Load proteoform data
-Proteoform <- read.csv("~/HubMAP/TDportal_TopPIC_overlappingIDs.csv")
+Proteoform <- read.csv("ProMexAlign_Proteoforms/Inputs/Proteoforms/TDportal_TopPIC_overlappingIDs.csv")
 
 ## TopPIC-----------------------------------------------------------------------
 
@@ -89,7 +91,7 @@ TDPortal <- Proteoform %>%
 # MS1 Feature Tables (MS1FTs). These intensities may be noise. In this approach, 
 # we decided to remove them. 
 
-# Remove itensities identified by ProMexAlign
+# Remove intensities identified by ProMexAlign
 cleanData <- function(filepath, sample) {
   
   # Read file 
@@ -115,9 +117,9 @@ cleanData <- function(filepath, sample) {
 
 # Load the data 
 RatBrain <- rbind(
-  cleanData("~/HubMAP/Rat_Brain_CV30_crosstab.tsv", "CV30"),
-  cleanData("~/HubMAP/Rat_Brain_CV40_crosstab.tsv", "CV40"),
-  cleanData("~/HubMAP/Rat_Brain_CV50_crosstab.tsv", "CV50") 
+  cleanData("~/Git_Repos/spatially-resolved-TDP/ProMexAlign_Proteoforms/Inputs/ProMexAlign/Rat_Brain_CV30_crosstab.tsv", "CV30"),
+  cleanData("~/Git_Repos/spatially-resolved-TDP/ProMexAlign_Proteoforms/Inputs/ProMexAlign/Rat_Brain_CV40_crosstab.tsv", "CV40"),
+  cleanData("~/Git_Repos/spatially-resolved-TDP/ProMexAlign_Proteoforms/Inputs/ProMexAlign/Rat_Brain_CV50_crosstab.tsv", "CV50") 
 ) %>%
   arrange(MonoMass) 
 
@@ -137,15 +139,25 @@ RatBrain$AverageRT <- lapply(1:nrow(RatBrain), function(row) {
 
 # Build a function to iterate through each proteoform table and identify
 # matches to the RatBrain table
-FindMatches <- function(Proteoforms, ProMexTable) {
+
+#' @param Proteoforms The cleaned TDPortal or TopPIC dataframes with redundancies removed.
+#' @param ProMexTable The combined ProMexAlign tables. 
+#' @param PPMWindow The ppm window for collapsing proteoforms. Default is 15 ppm.
+#' @param RTWindow The retention time for collapsing proteoforms. Default is 2 min. 
+FindMatches <- function(Proteoforms, ProMexTable, PPMWindow = 15, RTWindow = 2) {
 
   NoMatches <- c()
   
+  Tolerance <- ProMexTable$MonoMass * (PPMWindow / 1e6)
+  Upper <- ProMexTable$MonoMass + Tolerance
+  Lower <- ProMexTable$MonoMass - Tolerance
+  
   Matches <- lapply(1:nrow(Proteoforms), function(row) {
     
-    # Filter down to options within +/-1 Da and +/-4 RT window
-    Matches <- which(abs(ProMexTable$MonoMass - Proteoforms$Mass[row]) <= 1 & 
-                       abs(ProMexTable$AverageRT - Proteoforms$Retention.Time[row]) <= 4)
+    # Filter down to options within the PPM and RT Window
+    Matches <- which(Upper >= Proteoforms$Mass[row] - (PPMWindow/1e6) &
+                     Lower <= Proteoforms$Mass[row] + (PPMWindow/1e6) &
+                     abs(ProMexTable$AverageRT - Proteoforms$Retention.Time[row]) <= RTWindow)
     
     # If no matches, return message
     if (length(Matches) == 0) {
@@ -155,7 +167,6 @@ FindMatches <- function(Proteoforms, ProMexTable) {
       Matches <- Matches[which.min(abs(ProMexTable[Matches, "MonoMass"] - Proteoforms$Mass[row]))]
     } else if (length(Matches) > 1) {
       warning("There are still multiple matches that need to be addressed.")
-      browser()
     } 
     
     return(Matches)
@@ -233,14 +244,15 @@ RatBrain_NA <- RatBrain[is.na(RatBrain$TopPIC.Unique.ID) & is.na(RatBrain$TDPort
 RatBrain_Proteoform <- RatBrain[!is.na(RatBrain$TopPIC.Unique.ID) | !is.na(RatBrain$TDPortal.Unique.ID),]
 
 # Define a collapse function for each subset of data 
-large_collapse <- function(x, proteoform_mode) {
+large_collapse <- function(x, proteoform_mode, PPMWindow = 15, RTWindow = 2) {
 
   # Determine group numbers based on whether each subsequent mass falls within a
   # +/- 1 Da range of the previous mass.
   MassGroups <- x %>%
     mutate(
-      LowMass = MonoMass - 1,
-      HighMass = MonoMass + 1,
+      Tolerance = MonoMass * (PPMWindow / 1e6),
+      LowMass = MonoMass - Tolerance,
+      HighMass = MonoMass + Tolerance,
       MassFlag = MonoMass >= lag(LowMass, default = first(LowMass)) &
         MonoMass <= lag(HighMass, default = first(HighMass))
     )
@@ -277,8 +289,8 @@ large_collapse <- function(x, proteoform_mode) {
       RTGroups <- sub %>% 
         arrange(AverageRT) %>%
         mutate(
-          LowRT = AverageRT - 4,
-          HighRT = AverageRT + 4,
+          LowRT = AverageRT - RTWindow,
+          HighRT = AverageRT + RTWindow,
           RTFlag = AverageRT >= lag(LowRT, default = first(LowRT)) &
             AverageRT <= lag(HighRT, default = first(HighRT))
         )
@@ -299,7 +311,7 @@ large_collapse <- function(x, proteoform_mode) {
   # Generate a new ID and return maximum mass, mean min and max RT, and summed 
   # intensity
   median2 <- function(x) {
-    x[x == 0] <- NA
+    x <- x[!is.na(x)]
     median(x, na.rm = T)
   }
   
@@ -323,20 +335,20 @@ large_collapse <- function(x, proteoform_mode) {
       tidyr::nest() %>%
       mutate(
         NumFeatures = purrr::map(data, function(x) {nrow(x)}) %>% unlist(),
-        MonoMass = purrr::map(data, function(x) {max(x$MonoMass)}) %>% unlist(),
+        MonoMass = purrr::map(data, function(x) {x$MonoMass %>% paste0(collapse = ", ")}) %>% unlist(),
         MinElutionTime = purrr::map(data, function(x) {
-          x$MinElutionTime %>% mean() %>% round(3)}) %>% unlist(),
+          x$MinElutionTime %>% min() %>% round(3)}) %>% unlist(),
         MaxElutionTime = purrr::map(data, function(x) {
-          x$MaxElutionTime %>% mean() %>% round(3)}) %>% unlist(),
-        H3_C1 = purrr::map(data, function(x) {median2(x$H3_C1 %>% unlist())}) %>% unlist(),
-        H3_C2 = purrr::map(data, function(x) {median2(x$H3_C2 %>% unlist())}) %>% unlist(),
-        H3_C3 = purrr::map(data, function(x) {median2(x$H3_C3 %>% unlist())}) %>% unlist(),
-        H3_C4 = purrr::map(data, function(x) {median2(x$H3_C4 %>% unlist())}) %>% unlist(),
-        H3_C5 = purrr::map(data, function(x) {median2(x$H3_C5 %>% unlist())}) %>% unlist(),
-        H4_A1 = purrr::map(data, function(x) {median2(x$H4_A1 %>% unlist())}) %>% unlist(),
-        H4_A2 = purrr::map(data, function(x) {median2(x$H4_A2 %>% unlist())}) %>% unlist(),
-        H4_A3 = purrr::map(data, function(x) {median2(x$H4_A3 %>% unlist())}) %>% unlist(),
-        H4_A4 = purrr::map(data, function(x) {median2(x$H4_A4 %>% unlist())}) %>% unlist()
+          x$MaxElutionTime %>% max() %>% round(3)}) %>% unlist(),
+        H3_C1 = purrr::map(data, function(x) {sum(x$H3_C1 %>% unlist())}) %>% unlist(),
+        H3_C2 = purrr::map(data, function(x) {sum(x$H3_C2 %>% unlist())}) %>% unlist(),
+        H3_C3 = purrr::map(data, function(x) {sum(x$H3_C3 %>% unlist())}) %>% unlist(),
+        H3_C4 = purrr::map(data, function(x) {sum(x$H3_C4 %>% unlist())}) %>% unlist(),
+        H3_C5 = purrr::map(data, function(x) {sum(x$H3_C5 %>% unlist())}) %>% unlist(),
+        H4_A1 = purrr::map(data, function(x) {sum(x$H4_A1 %>% unlist())}) %>% unlist(),
+        H4_A2 = purrr::map(data, function(x) {sum(x$H4_A2 %>% unlist())}) %>% unlist(),
+        H4_A3 = purrr::map(data, function(x) {sum(x$H4_A3 %>% unlist())}) %>% unlist(),
+        H4_A4 = purrr::map(data, function(x) {sum(x$H4_A4 %>% unlist())}) %>% unlist()
       ) %>%
       select(-data) %>%
       arrange(MonoMass)
@@ -355,11 +367,17 @@ large_collapse <- function(x, proteoform_mode) {
       tidyr::nest() %>%
       mutate(
         NumFeatures = purrr::map(data, function(x) {nrow(x)}) %>% unlist(),
-        MonoMass = purrr::map(data, function(x) {max(x$MonoMass)}) %>% unlist(),
+        MonoMass = purrr::map(data, function(x) {
+          if (nrow(x) == 1) {x$MonoMass} else {
+            choose <- x %>% mutate(theSum = H3_C1 + H3_C2 + H3_C3 + H3_C4 + H3_C5 + H4_A1 + H4_A2 + H4_A3 + H4_A4) %>% 
+              dplyr::select(theSum) %>% unlist() %>% which.max()
+            return(x$MonoMass[choose])
+          }
+        }) %>% unlist(),
         MinElutionTime = purrr::map(data, function(x) {
-          x$MinElutionTime %>% mean() %>% round(3)}) %>% unlist(),
+          x$MinElutionTime %>% min() %>% round(3)}) %>% unlist(),
         MaxElutionTime = purrr::map(data, function(x) {
-          x$MaxElutionTime %>% mean() %>% round(3)}) %>% unlist(),
+          x$MaxElutionTime %>% max() %>% round(3)}) %>% unlist(),
         TopPIC.Unique.ID = purrr::map2(data, "TopPIC.Unique.ID", collapse_fun) %>% unlist(),
         TopPIC.Mass = purrr::map2(data, "TopPIC.Mass", collapse_fun) %>% unlist(),                 
         TopPIC.Retention.Time = purrr::map2(data, "TopPIC.Retention.Time", collapse_fun) %>% unlist(),      
@@ -370,15 +388,15 @@ large_collapse <- function(x, proteoform_mode) {
         TDPortal.Retention.Time = purrr::map2(data, "TDPortal.Retention.Time", collapse_fun) %>% unlist(),     
         TDPortal.Proteoform.Details = purrr::map2(data, "TDPortal.Proteoform.Details", collapse_fun) %>% unlist(),
         TDPortal.E.Value = purrr::map2(data, "TDPortal.E.Value", collapse_fun) %>% unlist(),
-        H3_C1 = purrr::map(data, function(x) {median2(x$H3_C1 %>% unlist())}) %>% unlist(),
-        H3_C2 = purrr::map(data, function(x) {median2(x$H3_C2 %>% unlist())}) %>% unlist(),
-        H3_C3 = purrr::map(data, function(x) {median2(x$H3_C3 %>% unlist())}) %>% unlist(),
-        H3_C4 = purrr::map(data, function(x) {median2(x$H3_C4 %>% unlist())}) %>% unlist(),
-        H3_C5 = purrr::map(data, function(x) {median2(x$H3_C5 %>% unlist())}) %>% unlist(),
-        H4_A1 = purrr::map(data, function(x) {median2(x$H4_A1 %>% unlist())}) %>% unlist(),
-        H4_A2 = purrr::map(data, function(x) {median2(x$H4_A2 %>% unlist())}) %>% unlist(),
-        H4_A3 = purrr::map(data, function(x) {median2(x$H4_A3 %>% unlist())}) %>% unlist(),
-        H4_A4 = purrr::map(data, function(x) {median2(x$H4_A4 %>% unlist())}) %>% unlist()
+        H3_C1 = purrr::map(data, function(x) {sum(x$H3_C1 %>% unlist())}) %>% unlist(),
+        H3_C2 = purrr::map(data, function(x) {sum(x$H3_C2 %>% unlist())}) %>% unlist(),
+        H3_C3 = purrr::map(data, function(x) {sum(x$H3_C3 %>% unlist())}) %>% unlist(),
+        H3_C4 = purrr::map(data, function(x) {sum(x$H3_C4 %>% unlist())}) %>% unlist(),
+        H3_C5 = purrr::map(data, function(x) {sum(x$H3_C5 %>% unlist())}) %>% unlist(),
+        H4_A1 = purrr::map(data, function(x) {sum(x$H4_A1 %>% unlist())}) %>% unlist(),
+        H4_A2 = purrr::map(data, function(x) {sum(x$H4_A2 %>% unlist())}) %>% unlist(),
+        H4_A3 = purrr::map(data, function(x) {sum(x$H4_A3 %>% unlist())}) %>% unlist(),
+        H4_A4 = purrr::map(data, function(x) {sum(x$H4_A4 %>% unlist())}) %>% unlist()
       ) %>%
       select(-data) %>%
       arrange(MonoMass)
@@ -390,7 +408,42 @@ large_collapse <- function(x, proteoform_mode) {
 }
 
 Final_NA_Groups <- large_collapse(RatBrain_NA, FALSE)
-Final_Proteoform_Groups <- large_collapse(RatBrain_Proteoform, TRUE)
+Proteoform_Groups <- large_collapse(RatBrain_Proteoform, TRUE)
+
+############################################
+## STEP 5: Identify and collapse isotopes ##
+############################################
+
+# REASONING:
+#-------------------------------------------------------------------------------
+# Isotopes within 1 or 2 Da (with a range established by the PPM window) should
+# be collapsed down and not counted as separate protein/proteoform identifications.
+# They should also be within the retention time window.
+
+PPMWindow <- 15
+
+Proteoform_Isotopes <- Proteoform_Groups %>%
+  arrange(MonoMass) %>%
+  ungroup() %>%
+  mutate(
+    Tolerance = MonoMass * (PPMWindow / 1e6),
+    FirstIsoLow = MonoMass - Tolerance + 1,
+    FirstIsoHigh = MonoMass + Tolerance + 1,
+    SecondIsoLow = MonoMass - Tolerance + 2,
+    SecondIsoHigh = MonoMass + Tolerance + 2,
+    FirstIsoLow = lag(FirstIsoLow, default = first(FirstIsoLow)),
+    FirstIsoHigh = lag(FirstIsoHigh, default = first(FirstIsoHigh)),
+    SecondIsoLow = lag(SecondIsoLow, default = first(SecondIsoLow)),
+    SecondIsoHigh = lag(SecondIsoHigh, default = first(SecondIsoHigh)),
+    MinRT = lag(MinElutionTime, default = first(MinElutionTime)),
+    MaxRT = lag(MaxElutionTime, default = first(MaxElutionTime)),
+    MeanRT = purrr::map2(MinElutionTime, MaxElutionTime, function(x,y) {mean(x,y)}) %>% unlist(),
+    IsotopeFlag1 = MonoMass >= FirstIsoLow & MonoMass <= FirstIsoHigh & MeanRT >= MinRT & MeanRT <= MaxRT,
+    IsotopeFlag2 = MonoMass >= SecondIsoLow & MonoMass <= SecondIsoHigh & MeanRT >= MinRT & MeanRT <= MaxRT,
+    ID = ifelse(IsotopeFlag1 | IsotopeFlag2, ID-1, ID)
+  ) %>%
+  dplyr::select(-c(FirstIsoLow, FirstIsoHigh, SecondIsoLow, SecondIsoHigh, MeanRT, MinRT, MaxRT, Tolerance)) %>%
+  dplyr::relocate(IsotopeFlag1, IsotopeFlag2)
 
 
 # Fill out NAs for unmatched features 
