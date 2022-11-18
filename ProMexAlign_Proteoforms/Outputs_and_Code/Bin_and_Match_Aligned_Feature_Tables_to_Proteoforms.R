@@ -42,12 +42,12 @@ ModName <- lapply(Proteoform$TopPIC.Proteoform, function(Name) {
 # Pull TopPIC-Relevant Data. "GCC" is a unique ID based on a soon-to-be published method.
 # Pull the lowest score per GCC. 
 TopPIC <- Proteoform %>%
-  select(c(TopPIC.gcc, TopPIC.UniProtAcc, TopPIC.Adjusted.precursor.mass, 
+  select(c(TopPIC.gcc, TopPIC.UniProtAcc, TopPIC.Precursor.mass, 
            TopPIC.RTmin, TopPIC.First_AA, TopPIC.Last_AA,
            TopPIC.E.value)) %>%
   mutate(
     "Unique.ID" = TopPIC.gcc,
-    "Mass" = TopPIC.Adjusted.precursor.mass,
+    "Mass" = TopPIC.Precursor.mass,
     "Retention.Time" = TopPIC.RTmin, 
     "Proteoform.Details" = paste0(TopPIC.UniProtAcc, " ", " (", 
       TopPIC.First_AA, "-", TopPIC.Last_AA, ") ", ModName),
@@ -408,7 +408,7 @@ large_collapse <- function(x, proteoform_mode, PPMWindow = 15, RTWindow = 2) {
 }
 
 Final_NA_Groups <- large_collapse(RatBrain_NA, FALSE)
-Proteoform_Groups <- large_collapse(RatBrain_Proteoform, TRUE)
+Final_Proteoform_Groups <- large_collapse(RatBrain_Proteoform, TRUE)
 
 ############################################
 ## STEP 5: Identify and collapse isotopes ##
@@ -459,7 +459,7 @@ FinalTable <- rbind(
   data.frame() %>%
   arrange(MonoMass)
 
-write.table(FinalTable, "~/Desktop/Proteoforms_and_Collapsed_Features.txt", 
+write.table(FinalTable, "~/Git_Repos/spatially-resolved-TDP/ProMexAlign_Proteoforms/Outputs_and_Code/Proteoforms_and_Collapsed_Features.txt", 
             quote = F, row.names = F, sep = "\t", na = "")
   
 
